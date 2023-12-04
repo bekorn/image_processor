@@ -2,7 +2,7 @@
 
 Finally come up with a project idea to learn about DLLs in C++.
 
-Inspired by this repo (shared on ÜNOG) https://github.com/Gord10/PaletteConverterCSharp
+Inspired by this repo (shared on ÃœNOG) https://github.com/Gord10/PaletteConverterCSharp
 
 ```txt
 -The-Gist------------------------------------------------------------------------------------------------
