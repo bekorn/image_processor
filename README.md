@@ -45,3 +45,8 @@ Extra features:
 - Learn Windows API, ditch GLFW
 
 ```
+
+
+
+Resources:
+- MrIncredible.png, https://disney.fandom.com/wiki/Mr._Incredible/Gallery?file=Incredibles_2_-_Concept_Art_-_Mr._Incredible.jpg

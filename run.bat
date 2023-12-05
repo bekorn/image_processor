@@ -1,1 +1,1 @@
-build\main.exe
+build\main.exe MrIncredible.png
