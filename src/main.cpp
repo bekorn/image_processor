@@ -96,7 +96,7 @@ struct Image
 	i32 x, y;
 };
 
-Image load_image(const char * rel_path)
+Image load_image(const char * rel_path, bool flip_vertically = true)
 {
 	std::string image_path;
 	image_path.reserve(1024);
@@ -107,6 +107,8 @@ Image load_image(const char * rel_path)
 
 	FILE * image_file = fopen(image_path.c_str(), "rb");
 	if (not image_file) exit_err("Can't open image file");
+
+	stbi_set_flip_vertically_on_load(flip_vertically);
 
 	int x, y, c;
 	stbi_uc * rgba_pixels = stbi_load_from_file(image_file, &x, &y, &c, 4);
@@ -186,10 +188,84 @@ void gl_debug_callback(
 	default: break;
 	}
 
-	print_err("GL[%s %s%s] ", source_str, type_str, severity_str);
-	print_err("ID %i: %s%c", id, message, (message[length - 2] != '\n' ? '\n' : '\0'));
+	print_err("GL[%s %s%s]", source_str, type_str, severity_str);
+	print_err(" %i: %s%c", id, message, (message[length - 2] != '\n' ? '\n' : '\0'));
 }
 
+
+GLuint blit_program;
+
+void init_blit_program()
+{
+	blit_program = glCreateProgram();
+	
+	GLuint vert = glCreateShader(GL_VERTEX_SHADER);
+	const char * vert_src = R"VERT(#version 330
+out vec2 uv;
+
+void main()
+{
+//  2
+//  |`.
+//  |  `.
+//  |----`.
+//  |    | `.
+//  '----'----
+//  0         1
+//
+//  gl_VertexID = 0  =>  gl_Position = (-1, -1, 1, 1) | uv = (0, 0)
+//  gl_VertexID = 1  =>  gl_Position = (+3, -1, 1, 1) | uv = (2, 0)
+//  gl_VertexID = 2  =>  gl_Position = (-1, +3, 1, 1) | uv = (0, 2)
+
+    gl_Position = vec4(
+        gl_VertexID == 1 ? 3 : -1,
+        gl_VertexID == 2 ? 3 : -1,
+        1,
+        1
+    );
+
+    uv = vec2(
+        gl_VertexID == 1 ? 2 : 0,
+        gl_VertexID == 2 ? 2 : 0
+    );
+}
+	)VERT";
+	glShaderSource(vert, 1, &vert_src, 0);
+	glCompileShader(vert);
+	
+	GLuint frag = glCreateShader(GL_FRAGMENT_SHADER);
+	const char * frag_src = R"FRAG(#version 330
+in vec2 uv;
+
+uniform sampler2D tex;
+
+out vec4 color;
+
+void main()
+{
+	color = texture(tex, uv);
+}
+	)FRAG";
+	glShaderSource(frag, 1, &frag_src, 0);
+	glCompileShader(frag);
+
+	glAttachShader(blit_program, vert);
+	glAttachShader(blit_program, frag);
+	glLinkProgram(blit_program);
+
+	glUseProgram(blit_program);
+	glUniform1i(glGetUniformLocation(blit_program, "tex"), 0);
+}
+
+void blit_texture(GLuint tex)
+{
+	glUseProgram(blit_program);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, tex);
+
+	glDrawArrays(GL_TRIANGLES, 0, 3);
+}
 
 
 ///--- State
@@ -214,6 +290,12 @@ void clear_actions()
 ///--- Application
 int main(int argc, const char * argv[])
 {
+	/// Config
+	bool const DOUBLE_BUFFERING = false;
+	int const SWAP_INTERVAL = 30;
+	bool const OPENGL_DEBUG = true;
+
+
 	/// Init
 	if (argc < 2) exit_err("Supply image path as the first argument");
 	printf("Image: %s\n", argv[1]);
@@ -221,27 +303,33 @@ int main(int argc, const char * argv[])
 	Image const origianl_img = load_image(argv[1]);
 	printf("Loaded image, resolution: %dx%d\n", origianl_img.x, origianl_img.y);
 
-	glfwSetErrorCallback([](int err, const char * desc){ print_err("GLFW Error[%i]: %s\n", err, desc); });
+	glfwSetErrorCallback([](int err, const char * desc){ print_err("GLFW[Error] %i: %s\n", err, desc); });
 	if (not glfwInit()) exit_err("GLFW Failed to init");
 
-	glfwWindowHint(GLFW_DOUBLEBUFFER, true);
-	glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);
+	glfwWindowHint(GLFW_RESIZABLE, false);
+	glfwWindowHint(GLFW_DOUBLEBUFFER, DOUBLE_BUFFERING);
+	glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, OPENGL_DEBUG);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	GLFWwindow * window = glfwCreateWindow(origianl_img.x, origianl_img.y, "Image Processor", nullptr, nullptr);
 	if (not window) exit_err("Window or context creation failed");
 
 	glfwMakeContextCurrent(window);
-	glfwSwapInterval(10);
+	glfwSwapInterval(SWAP_INTERVAL);
 	{
 		int const glad_version = gladLoadGL(glfwGetProcAddress);
 		const unsigned char * const gl_version = glGetString(GL_VERSION);
 		printf("Glad: %i, OpenGL: %s\n", glad_version, gl_version);
 
-		glDebugMessageCallback(gl_debug_callback, nullptr);
+		if (OPENGL_DEBUG) glDebugMessageCallback(gl_debug_callback, nullptr);
 	}
 	glfwSetKeyCallback(window, register_actions);
 
+	GLuint empty_vao;
+	glGenVertexArrays(1, &empty_vao);
+	glBindVertexArray(empty_vao);
+
+	init_blit_program();
 
 	GLuint const origianl_tex = create_texture({
 		.x = origianl_img.x, .y = origianl_img.y, .pixels = origianl_img.pixels,
@@ -251,21 +339,25 @@ int main(int argc, const char * argv[])
 		.x = origianl_img.x, .y = origianl_img.y, .pixels = nullptr,
 	});
 
-	GLuint active_tex = origianl_tex;
-
 
 	/// Run
+	GLuint active_tex = origianl_tex;
+	blit_texture(active_tex);
+
 	while (not glfwWindowShouldClose(window))
 	{
 		clear_actions();
 		glfwPollEvents();
 
-		if (Actions.switch_texture) active_tex = (active_tex == origianl_tex ? processed_tex : origianl_tex);
+		if (Actions.switch_texture) 
+		{
+			active_tex = (active_tex == origianl_tex ? processed_tex : origianl_tex);
+			blit_texture(active_tex);
+		}
 		if (Actions.recompile_dll) printf("Recompiling DLL\n");
 
-		// TODO(bekorn): copy active_tex to default framebuffer
 
-		glfwSwapBuffers(window);
+		if (DOUBLE_BUFFERING) glfwSwapBuffers(window); else glFinish();
 	}
 
 
