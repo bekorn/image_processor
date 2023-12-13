@@ -1,69 +1,11 @@
-///--- Common
-#include <ciso646>
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-
-using i32 = int32_t;
-using u8 = uint8_t;
-using u8x4 = uint8_t[4];
-
-template<typename T> T max(T a, T b) { return a > b ? a : b; }
-template<typename T> T min(T a, T b) { return a < b ? a : b; }
-
-template<typename T>
-struct unique_one
-{
-	T * thing;
-	unique_one() : thing(nullptr) {}
-	unique_one(T * && raw) : thing(raw) { raw = nullptr; }
-	~unique_one() { delete thing; }
-
-	operator bool() const { return thing != nullptr; }
-	T & operator ->() const { return *thing; }
-};
-
-template<typename T>
-struct unique_array
-{
-	T * things;
-	unique_array() : things(nullptr) {}
-	unique_array(T * && raw) : things(raw) { raw = nullptr; }
-	~unique_array() { delete[] things; }
-
-	operator bool() const { return things != nullptr; }
-	T & operator [](int idx) const { return things[idx]; }
-	operator T *() const { return things; }
-};
-
-template<typename T>
-struct span {
-	T * begin = nullptr;
-	int size = 0;
-
-	bool empty() const { return size == 0; }
-};
+#include "common.hpp"
+#include "process.hpp"
 
 
-///--- Interoperations
-#include <stdarg.h>
-
-// see https://c-faq.com/varargs/handoff.html for the _err functions
-void exit_err(const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-
-	exit(EXIT_FAILURE);
-}
-
-void print_err(const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-}
+///--- Interop
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 
 bool exec(const char * cmd, std::string & out) {
     FILE * pipe = _popen(cmd, "r");
@@ -79,33 +21,37 @@ bool exec(const char * cmd, std::string & out) {
     return true;
 }
 
+void apply_process(Image const & original_img, Image & processed_img)
+{
+	const char * dll_rel_path = "build_dll\\process.dll";
+	HMODULE dll = LoadLibraryA(dll_rel_path);
+	if (not dll) exit_err("Can't load library from '%s'", dll_rel_path);
+	printf("Loaded DLL from %s\n", dll_rel_path);
+
+	auto init = (f_init *)GetProcAddress(dll, EXPORTED_INIT_NAME_STR);
+	if (not init) exit_err("Can't find " EXPORTED_INIT_NAME_STR " in dll");
+
+	auto process = (f_process *)GetProcAddress(dll, EXPORTED_PROCESS_NAME_STR);
+	if (not process) exit_err("Can't find " EXPORTED_PROCESS_NAME_STR " in dll");
+
+	init(original_img);
+
+	original_img.blit_into(processed_img);
+	process(processed_img);
+
+	FreeLibrary(dll);
+}
+
 
 ///--- Graphics
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
-#include <glad/gl.h>
-
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_PNG
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/image.h>
 
-struct Image
-{
-	unique_array<u8x4> pixels;
-	i32 x, y;
-};
-
 Image load_image(const char * rel_path, bool flip_vertically = true)
 {
-	std::string image_path;
-	image_path.reserve(1024);
-	if (not exec("cd", image_path)) exit_err("Error on exec cd");
-
-	image_path.push_back('\\'), image_path.append(rel_path);
-	printf("ImagePath: %s\n", image_path.c_str());
-
-	FILE * image_file = fopen(image_path.c_str(), "rb");
+	FILE * image_file = fopen(rel_path, "rb");
 	if (not image_file) exit_err("Can't open image file");
 
 	stbi_set_flip_vertically_on_load(flip_vertically);
@@ -115,8 +61,13 @@ Image load_image(const char * rel_path, bool flip_vertically = true)
 	if (not rgba_pixels) exit_err("Can't load image: %s", stbi_failure_reason());
 	fclose(image_file);
 
-	return {.pixels = (u8x4 *)rgba_pixels, .x = x, .y = y};
+	return {x, y, (u8x4 *)(rgba_pixels)};
 }
+
+
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+#include <glad/gl.h>
 
 struct TextureDesc
 {
@@ -146,6 +97,12 @@ GLuint create_texture(TextureDesc const & desc)
 	glGenerateMipmap(GL_TEXTURE_2D);
 
 	return id;
+}
+
+void update_texture(GLuint tex, Image const & img)
+{
+	glBindTexture(GL_TEXTURE_2D, tex);
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, img.x, img.y, GL_RGBA, GL_UNSIGNED_BYTE, img.pixels);
 }
 
 void gl_debug_callback(
@@ -291,8 +248,7 @@ void clear_actions()
 int main(int argc, const char * argv[])
 {
 	/// Config
-	bool const DOUBLE_BUFFERING = false;
-	int const SWAP_INTERVAL = 30;
+	int const TARGET_FPS = 10;
 	bool const OPENGL_DEBUG = true;
 
 
@@ -300,22 +256,25 @@ int main(int argc, const char * argv[])
 	if (argc < 2) exit_err("Supply image path as the first argument");
 	printf("Image: %s\n", argv[1]);
 
-	Image const origianl_img = load_image(argv[1]);
-	printf("Loaded image, resolution: %dx%d\n", origianl_img.x, origianl_img.y);
+	Image const original_img = load_image(argv[1]);
+	printf("Loaded image, resolution: %dx%d\n", original_img.x, original_img.y);
+
+	Image processed_img(original_img.x, original_img.y, nullptr);
+
+	apply_process(original_img, processed_img);
 
 	glfwSetErrorCallback([](int err, const char * desc){ print_err("GLFW[Error] %i: %s\n", err, desc); });
 	if (not glfwInit()) exit_err("GLFW Failed to init");
 
 	glfwWindowHint(GLFW_RESIZABLE, false);
-	glfwWindowHint(GLFW_DOUBLEBUFFER, DOUBLE_BUFFERING);
+	glfwWindowHint(GLFW_DOUBLEBUFFER, false);
 	glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, OPENGL_DEBUG);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-	GLFWwindow * window = glfwCreateWindow(origianl_img.x, origianl_img.y, "Image Processor", nullptr, nullptr);
+	GLFWwindow * window = glfwCreateWindow(original_img.x, original_img.y, "Image Processor", nullptr, nullptr);
 	if (not window) exit_err("Window or context creation failed");
 
 	glfwMakeContextCurrent(window);
-	glfwSwapInterval(SWAP_INTERVAL);
 	{
 		int const glad_version = gladLoadGL(glfwGetProcAddress);
 		const unsigned char * const gl_version = glGetString(GL_VERSION);
@@ -332,11 +291,11 @@ int main(int argc, const char * argv[])
 	init_blit_program();
 
 	GLuint const origianl_tex = create_texture({
-		.x = origianl_img.x, .y = origianl_img.y, .pixels = origianl_img.pixels,
+		.x = original_img.x, .y = original_img.y, .pixels = original_img.pixels,
 	});
 
 	GLuint const processed_tex = create_texture({
-		.x = origianl_img.x, .y = origianl_img.y, .pixels = nullptr,
+		.x = original_img.x, .y = original_img.y, .pixels = processed_img.pixels,
 	});
 
 
@@ -346,6 +305,8 @@ int main(int argc, const char * argv[])
 
 	while (not glfwWindowShouldClose(window))
 	{
+		double const frame_begin_s = glfwGetTime();
+
 		clear_actions();
 		glfwPollEvents();
 
@@ -354,10 +315,18 @@ int main(int argc, const char * argv[])
 			active_tex = (active_tex == origianl_tex ? processed_tex : origianl_tex);
 			blit_texture(active_tex);
 		}
-		if (Actions.recompile_dll) printf("Recompiling DLL\n");
 
+		if (Actions.recompile_dll)
+		{
+			apply_process(original_img, processed_img);
+			update_texture(processed_tex, processed_img);
+			if (processed_tex == active_tex) blit_texture(processed_tex);
+		}
 
-		if (DOUBLE_BUFFERING) glfwSwapBuffers(window); else glFinish();
+		glFinish();
+
+		double frame_s = glfwGetTime() - frame_begin_s;
+		Sleep((DWORD)max(0., 1000 * ((1. / TARGET_FPS) - frame_s)));
 	}
 
 

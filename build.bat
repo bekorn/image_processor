@@ -1,10 +1,12 @@
 @echo off
 
-if not exist build (mkdir build)
+set build_dir=.\build\
 
-cl /Fobuild\ /Febuild\ ^
+if not exist %build_dir% (mkdir %build_dir%)
+
+cl /Fo%build_dir%\ /Fe%build_dir%\ ^
 /std:c++20 /permissive- /W3 ^
-/Z7 /DEBUG:FASTLINK /Fdbuild\ ^
+/Z7 /DEBUG:FASTLINK /Fd%build_dir%\ ^
 /MD ^
 src\main.cpp ^
 /I vendor\glfw-3.3.8\include\   vendor\glfw-3.3.8\lib-vc2022\glfw3.lib ^
