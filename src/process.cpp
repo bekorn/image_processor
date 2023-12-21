@@ -2,23 +2,49 @@
 #include "process.hpp"
 
 namespace {
-#line 1
 ///--- User Code Begin
 
 void init(Image const & image)
 {
-    printf("DLL Init\n");
+    printf("[DLL] Init\n");
 }
 
 void process(Image & image)
 {
-    printf("DLL Processing image %ix%i\n", image.x, image.y);
+    printf("[DLL] Processing image %ix%i\n", image.x, image.y);
 
-    int const pixel_count = image.x * image.y;
-    for (int i = 0; i < pixel_count; i++)
+    srand(123*321);
+
+    i32 const pixel_count = image.x * image.y;
+    for (i32 i = 0; i < pixel_count; i++)
     {
         u8x4 & pixel = image.pixels[i];
-        pixel[0] = 255;
+
+        f32 luminance = (
+            powf(pixel[0] / 255.f, 2.2f) * 0.2126f +
+            powf(pixel[1] / 255.f, 2.2f) * 0.7152f +
+            powf(pixel[2] / 255.f, 2.2f) * 0.0722f
+        );
+
+        f32 luminance_diff = abs(
+            (luminance - pixel[0] / 255.f) +
+            (luminance - pixel[1] / 255.f) +
+            (luminance - pixel[2] / 255.f)
+        );
+
+        luminance *= max(0.f, -0.2f + powf(max(0.f, -0.04f + float(rand()) / RAND_MAX), 0.05f));
+
+        if (luminance < 0.1f) luminance = 0.04f;
+        else if (luminance < 0.2f) luminance = 0.13f;
+
+        luminance *= (luminance_diff < 0.85f);
+        luminance *= 0.04f + powf(luminance_diff, 1.5f);
+
+        luminance = saturate(-0.84f + powf(luminance + 0.84f, 2.2f));
+        luminance *= 1.6f;
+        luminance = saturate(powf(luminance, 0.8f));
+
+        pixel[0] = pixel[1] = pixel[2] = u8(luminance * 255);
     }
 }
 

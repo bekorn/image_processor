@@ -7,11 +7,16 @@
 #include <string>
 
 using i32 = int32_t;
+using i64 = int64_t;
 using u8 = uint8_t;
+using u64 = uint64_t;
+using f32 = float;
 using u8x4 = uint8_t[4];
 
 template<typename T> T max(T a, T b) { return a > b ? a : b; }
 template<typename T> T min(T a, T b) { return a < b ? a : b; }
+template<typename T> T clamp(T a, T l, T h) { return max(l, min(a, h)); }
+template<typename T> T saturate(T a) { return max(T{0}, min(a, T{1})); }
 template<typename C, typename T> C && reinterpret_move(T & t) { return reinterpret_cast<C &&>(t);}
 
 template<typename T>

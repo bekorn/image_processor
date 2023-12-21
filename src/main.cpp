@@ -21,9 +21,52 @@ bool exec(const char * cmd, std::string & out) {
     return true;
 }
 
+struct Timer
+{
+	i64 begin;
+	const char * tag;
+	Timer(const char * tag) : begin(GetTickCount64()), tag(tag) {}
+	~Timer() { printf("[Timer] %6lld ms | %s\n", GetTickCount64() - begin, tag); }
+};
+#define TimeScope(tag) Timer timer(tag)
+
+u64 get_file_last_write(const char * path)
+{
+	WIN32_FILE_ATTRIBUTE_DATA attrb;
+	if (not GetFileAttributesExA(path, GetFileExInfoStandard, &attrb))
+	{
+		print_err("Can't get file info of \"%s\"\n", path);
+		return 0;
+	}
+
+	return ULARGE_INTEGER{attrb.ftLastWriteTime.dwLowDateTime, attrb.ftLastWriteTime.dwHighDateTime}.QuadPart;
+}
+
 void apply_process(Image const & original_img, Image & processed_img)
 {
 	const char * dll_rel_path = "build_dll\\process.dll";
+	const char * cpp_rel_path = "src\\process.cpp";
+
+	u64 last_compile_time = get_file_last_write(dll_rel_path);
+	u64 last_change_time = get_file_last_write(cpp_rel_path);
+	if (last_compile_time > last_change_time)
+	{
+		printf("DLL is fresh, skipping build.\n");
+		return;
+	}
+
+	{
+		TimeScope("Built DLL");
+
+		std::string out;
+		// TODO(bekorn): check exit code to determine success
+		if (not exec("build_dll", out))
+		{
+			print_err("Building DLL failed with this output:\n%s", out);
+			return;
+		}
+	}
+
 	HMODULE dll = LoadLibraryA(dll_rel_path);
 	if (not dll) exit_err("Can't load library from '%s'", dll_rel_path);
 	printf("Loaded DLL from %s\n", dll_rel_path);
@@ -248,7 +291,7 @@ void clear_actions()
 int main(int argc, const char * argv[])
 {
 	/// Config
-	int const TARGET_FPS = 10;
+	int const TARGET_FPS = 120;
 	bool const OPENGL_DEBUG = true;
 
 
