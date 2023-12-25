@@ -7,17 +7,26 @@
 #define NOMINMAX
 #include <windows.h>
 
-bool exec(const char * cmd, std::string & out) {
+bool exec(const char * cmd, std::string & out, i32 & exit_code) {
+	// https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/popen-wpopen?view=msvc-170#example
     FILE * pipe = _popen(cmd, "r");
     if (not pipe) return false;
 
 	char buffer[64];
 	while (fgets(buffer, sizeof(buffer), pipe))
-		out += buffer;
+		out.append(buffer);
 
 	out.erase(out.end() - 1); // trim the new line at the end
 
-    _pclose(pipe);
+    int file_eof = feof(pipe);
+    exit_code = _pclose(pipe);
+
+    if (not file_eof)
+	{
+    	printf("Error: Failed to read the pipe to the end.\n");
+		return false;
+	}
+
     return true;
 }
 
@@ -35,7 +44,7 @@ u64 get_file_last_write(const char * path)
 	WIN32_FILE_ATTRIBUTE_DATA attrb;
 	if (not GetFileAttributesExA(path, GetFileExInfoStandard, &attrb))
 	{
-		print_err("Can't get file info of \"%s\"\n", path);
+		print_err("[Error] Can't get file info of \"%s\"\n", path);
 		return 0;
 	}
 
@@ -49,27 +58,24 @@ void apply_process(Image const & original_img, Image & processed_img)
 
 	u64 last_compile_time = get_file_last_write(dll_rel_path);
 	u64 last_change_time = get_file_last_write(cpp_rel_path);
-	if (last_compile_time > last_change_time)
+	if (last_change_time > last_compile_time)
 	{
-		printf("DLL is fresh, skipping build.\n");
-		return;
-	}
-
-	{
-		TimeScope("Built DLL");
+		TimeScope("Build DLL");
 
 		std::string out;
-		// TODO(bekorn): check exit code to determine success
-		if (not exec("build_dll", out))
+		i32 exit_code;
+		if (not exec("build_dll", out, exit_code) or exit_code != 0)
 		{
-			print_err("Building DLL failed with this output:\n%s", out);
+			print_err("[Error] Failed to build DLL. ");
+			print_err("Exit code: %i, Output:\n---\n%s\n---\n", exit_code, out.c_str());
 			return;
 		}
 	}
 
+	TimeScope("Apply process");
+
 	HMODULE dll = LoadLibraryA(dll_rel_path);
 	if (not dll) exit_err("Can't load library from '%s'", dll_rel_path);
-	printf("Loaded DLL from %s\n", dll_rel_path);
 
 	auto init = (f_init *)GetProcAddress(dll, EXPORTED_INIT_NAME_STR);
 	if (not init) exit_err("Can't find " EXPORTED_INIT_NAME_STR " in dll");
@@ -80,7 +86,10 @@ void apply_process(Image const & original_img, Image & processed_img)
 	init(original_img);
 
 	original_img.blit_into(processed_img);
-	process(processed_img);
+	{
+		TimeScope("Run process");
+		process(processed_img);
+	}
 
 	FreeLibrary(dll);
 }

@@ -6,7 +6,7 @@ namespace {
 
 void init(Image const & image)
 {
-    printf("[DLL] Init\n");
+    // printf("[DLL] Init\n");
 }
 
 void process(Image & image)
@@ -16,10 +16,12 @@ void process(Image & image)
     srand(123*321);
 
     i32 const pixel_count = image.x * image.y;
+    #pragma omp parallel for schedule(static)
     for (i32 i = 0; i < pixel_count; i++)
     {
         u8x4 & pixel = image.pixels[i];
 
+        // TODO(bekorn): if I ever add Time parameter, add [0, 0.4] to the blue's factor
         f32 luminance = (
             powf(pixel[0] / 255.f, 2.2f) * 0.2126f +
             powf(pixel[1] / 255.f, 2.2f) * 0.7152f +
