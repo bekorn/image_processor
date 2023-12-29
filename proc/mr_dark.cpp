@@ -1,9 +1,6 @@
 #include "common.hpp"
 #include "process.hpp"
 
-namespace {
-///--- User Code Begin
-
 void init(Image const & image)
 {
     // printf("[DLL] Init\n");
@@ -49,12 +46,3 @@ void process(Image & image)
         pixel[0] = pixel[1] = pixel[2] = u8(luminance * 255);
     }
 }
-
-///--- User Code End
-} // end anonymous namespace
-
-#define EXPORT extern "C" __declspec(dllexport)
-
-// These will check for function signature and make the user code cleaner
-EXPORT void EXPORTED_INIT_NAME(Image const & image) { init(image); }
-EXPORT void EXPORTED_PROCESS_NAME(Image & image) { process(image); }

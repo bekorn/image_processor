@@ -53,8 +53,8 @@ u64 get_file_last_write(const char * path)
 
 void apply_process(Image const & original_img, Image & processed_img)
 {
-	const char * dll_rel_path = "build_dll\\process.dll";
-	const char * cpp_rel_path = "src\\process.cpp";
+	const char * dll_rel_path = "build_dll\\process_wrapper.dll";
+	const char * cpp_rel_path = "proc\\mr_dark.cpp";
 
 	u64 last_compile_time = get_file_last_write(dll_rel_path);
 	u64 last_change_time = get_file_last_write(cpp_rel_path);
@@ -64,7 +64,9 @@ void apply_process(Image const & original_img, Image & processed_img)
 
 		std::string out;
 		i32 exit_code;
-		if (not exec("build_dll", out, exit_code) or exit_code != 0)
+		std::string command("build_dll ");
+		command.append(cpp_rel_path);
+		if (not exec(command.c_str(), out, exit_code) or exit_code != 0)
 		{
 			print_err("[Error] Failed to build DLL. ");
 			print_err("Exit code: %i, Output:\n---\n%s\n---\n", exit_code, out.c_str());
