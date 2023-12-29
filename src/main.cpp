@@ -23,7 +23,7 @@ bool exec(const char * cmd, std::string & out, i32 & exit_code) {
 
     if (not file_eof)
 	{
-    	printf("Error: Failed to read the pipe to the end.\n");
+    	printf("[Error] Failed to read the pipe to the end.\n");
 		return false;
 	}
 
@@ -44,36 +44,46 @@ u64 get_file_last_write(const char * path)
 	WIN32_FILE_ATTRIBUTE_DATA attrb;
 	if (not GetFileAttributesExA(path, GetFileExInfoStandard, &attrb))
 	{
-		print_err("[Error] Can't get file info of \"%s\"\n", path);
+		print_err("[Error] Can't get file info of \"%s\".\n", path);
 		return 0;
 	}
 
 	return ULARGE_INTEGER{attrb.ftLastWriteTime.dwLowDateTime, attrb.ftLastWriteTime.dwHighDateTime}.QuadPart;
 }
 
-void apply_process(Image const & original_img, Image & processed_img)
-{
-	const char * dll_rel_path = "build_dll\\process_wrapper.dll";
-	const char * cpp_rel_path = "proc\\mr_dark.cpp";
+const char * const dll_rel_path = "build_dll\\process_wrapper.dll";
 
-	u64 last_compile_time = get_file_last_write(dll_rel_path);
-	u64 last_change_time = get_file_last_write(cpp_rel_path);
-	if (last_change_time > last_compile_time)
+void build_process(const char * cpp_abs_path, bool check_write_times)
+{
+	bool should_build = true;
+
+	if (check_write_times)
+	{
+		u64 last_compile_time = get_file_last_write(dll_rel_path);
+		u64 last_change_time = get_file_last_write(cpp_abs_path);
+		should_build = last_change_time > last_compile_time;
+	}
+
+	if (should_build)
 	{
 		TimeScope("Build DLL");
 
+		char command[1024];
+		sprintf_s(command, "build_dll %s", cpp_abs_path);
+
 		std::string out;
 		i32 exit_code;
-		std::string command("build_dll ");
-		command.append(cpp_rel_path);
-		if (not exec(command.c_str(), out, exit_code) or exit_code != 0)
+		if (not exec(command, out, exit_code) or exit_code != 0)
 		{
 			print_err("[Error] Failed to build DLL. ");
 			print_err("Exit code: %i, Output:\n---\n%s\n---\n", exit_code, out.c_str());
 			return;
 		}
 	}
+}
 
+void apply_process(Image const & original_img, Image & processed_img)
+{
 	TimeScope("Apply process");
 
 	HMODULE dll = LoadLibraryA(dll_rel_path);
@@ -282,19 +292,31 @@ void blit_texture(GLuint tex)
 ///--- State
 struct {
 	bool switch_texture = false;
-	bool recompile_dll = false;
+	bool apply_process = false;
+	bool change_target_abs_path = false;
 } Actions;
 
-void register_actions(GLFWwindow * window, int key, int scancode, int action, int mods)
+struct {
+	std::string target_abs_path = {};
+} State;
+
+void key_callback(GLFWwindow * window, int key, int scancode, int action, int mods)
 {
 	if (action == GLFW_PRESS and key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(window, true);
 	if (action == GLFW_PRESS and key == GLFW_KEY_SPACE) Actions.switch_texture = true;
-	if (action == GLFW_PRESS and key == GLFW_KEY_ENTER) Actions.recompile_dll = true;
+	if (action == GLFW_PRESS and key == GLFW_KEY_ENTER) Actions.apply_process = true;
 }
 
 void clear_actions()
 {
 	Actions = {0};
+}
+
+void drop_callback(GLFWwindow* window, int path_count, const char* paths[])
+{
+	Actions.change_target_abs_path = true;
+	State.target_abs_path = paths[0];
+	printf("Set target file to \"%s\".\n", State.target_abs_path.c_str());
 }
 
 
@@ -315,7 +337,12 @@ int main(int argc, const char * argv[])
 
 	Image processed_img(original_img.x, original_img.y, nullptr);
 
-	apply_process(original_img, processed_img);
+	if (argc > 2)
+	{
+		State.target_abs_path = argv[2];
+		build_process(State.target_abs_path.c_str(), false);
+		apply_process(original_img, processed_img);
+	}
 
 	glfwSetErrorCallback([](int err, const char * desc){ print_err("GLFW[Error] %i: %s\n", err, desc); });
 	if (not glfwInit()) exit_err("GLFW Failed to init");
@@ -336,7 +363,8 @@ int main(int argc, const char * argv[])
 
 		if (OPENGL_DEBUG) glDebugMessageCallback(gl_debug_callback, nullptr);
 	}
-	glfwSetKeyCallback(window, register_actions);
+	glfwSetKeyCallback(window, key_callback);
+	glfwSetDropCallback(window, drop_callback);
 
 	GLuint empty_vao;
 	glGenVertexArrays(1, &empty_vao);
@@ -359,7 +387,7 @@ int main(int argc, const char * argv[])
 
 	while (not glfwWindowShouldClose(window))
 	{
-		double const frame_begin_s = glfwGetTime();
+		f64 const frame_begin_s = glfwGetTime();
 
 		clear_actions();
 		glfwPollEvents();
@@ -370,8 +398,22 @@ int main(int argc, const char * argv[])
 			blit_texture(active_tex);
 		}
 
-		if (Actions.recompile_dll)
+		if (Actions.apply_process)
 		{
+			if (State.target_abs_path.empty())
+				print_err("[Error] Set a target file by dropping a file into the window.\n");
+			else
+			{
+				build_process(State.target_abs_path.c_str(), true);
+				apply_process(original_img, processed_img);
+				update_texture(processed_tex, processed_img);
+				if (processed_tex == active_tex) blit_texture(processed_tex);
+			}
+		}
+
+		if (Actions.change_target_abs_path)
+		{
+			build_process(State.target_abs_path.c_str(), false);
 			apply_process(original_img, processed_img);
 			update_texture(processed_tex, processed_img);
 			if (processed_tex == active_tex) blit_texture(processed_tex);
@@ -379,7 +421,7 @@ int main(int argc, const char * argv[])
 
 		glFinish();
 
-		double frame_s = glfwGetTime() - frame_begin_s;
+		f64 frame_s = glfwGetTime() - frame_begin_s;
 		Sleep((DWORD)max(0., 1000 * ((1. / TARGET_FPS) - frame_s)));
 	}
 

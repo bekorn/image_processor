@@ -11,6 +11,7 @@ using i64 = int64_t;
 using u8 = uint8_t;
 using u64 = uint64_t;
 using f32 = float;
+using f64 = double;
 using u8x4 = uint8_t[4];
 
 template<typename T> T max(T a, T b) { return a > b ? a : b; }

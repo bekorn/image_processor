@@ -1,11 +1,10 @@
 @echo off
 
 if [%~1]==[] (
-    echo Usage: build_dll.bat ^<relative_path_to_cpp^>
+    echo Usage: build_dll.bat ^<absolute_path_to_cpp^>
     exit /b 1
 )
-rem https://stackoverflow.com/questions/1645843/resolve-absolute-path-from-relative-path-and-or-file-name
-set process_abs_path=%~dp0%1
+set process_abs_path=%1
 
 set build_dir=.\build_dll\
 
