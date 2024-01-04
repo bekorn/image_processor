@@ -5,11 +5,9 @@
 #error PROC_PATH NOT defined
 #endif
 
-namespace {
-///--- User Code Begin
+
 #include PROC_PATH
-///--- User Code End
-}
+
 
 #define EXPORT extern "C" __declspec(dllexport)
 

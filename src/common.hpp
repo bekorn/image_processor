@@ -9,10 +9,13 @@
 using i32 = int32_t;
 using i64 = int64_t;
 using u8 = uint8_t;
+using u8x4 = u8[4];
+using u32 = uint32_t;
+using u32x3 = u32[3];
+using u32x4 = u32[4];
 using u64 = uint64_t;
 using f32 = float;
 using f64 = double;
-using u8x4 = uint8_t[4];
 
 template<typename T> T max(T a, T b) { return a > b ? a : b; }
 template<typename T> T min(T a, T b) { return a < b ? a : b; }
@@ -51,14 +54,19 @@ struct unique_array
 	operator bool() const { return things != nullptr; }
 	T & operator [](int idx) const { return things[idx]; }
 	operator T *() const { return things; }
+
+    // TODO(bekorn): maybe keep the size and have begin()/end()
 };
 
 template<typename T>
 struct span {
-	T * begin = nullptr;
+	T * ptr = nullptr;
 	int size = 0;
 
 	bool empty() const { return size == 0; }
+    T & operator[](size_t idx) { return ptr[idx]; }
+    T * begin() const { return ptr; }
+    T * end() const { return ptr + size; }
 };
 
 

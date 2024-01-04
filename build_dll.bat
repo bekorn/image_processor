@@ -12,8 +12,6 @@ if not exist %build_dir% (
     mkdir %build_dir%
 )
 
-rem https://stackoverflow.com/questions/34439956/vc-crash-when-freeing-a-dll-built-with-openmp
-set OMP_WAIT_POLICY=passive
 
 set lang_args=/std:c++20 /permissive- /openmp
 set file_args=/Fo%build_dir% /Fe%build_dir%
