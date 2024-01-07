@@ -98,6 +98,7 @@ struct Image
 	unique_array<u8x4> pixels;
 	i32 x, y;
 
+    Image() = default;
     Image(int x, int y, nullptr_t) : pixels(new u8x4[x * y]), x(x), y(y) {}
     Image(int x, int y, u8x4 * && pixels) : pixels(std::move(pixels)), x(x), y(y) {}
 

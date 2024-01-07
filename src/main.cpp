@@ -53,7 +53,7 @@ u64 get_file_last_write(const char * path)
 
 const char * const dll_rel_path = "build_dll\\process_wrapper.dll";
 
-void build_process(const char * cpp_abs_path, bool check_write_times)
+bool build_process(const char * cpp_abs_path, bool check_write_times)
 {
 	bool should_build = true;
 
@@ -77,9 +77,11 @@ void build_process(const char * cpp_abs_path, bool check_write_times)
 		{
 			print_err("[Error] Failed to build DLL. ");
 			print_err("Exit code: %i, Output:\n---\n%s\n---\n", exit_code, out.c_str());
-			return;
+			return false;
 		}
 	}
+
+	return true;
 }
 
 void apply_process(Image const & original_img, Image & processed_img)
@@ -95,12 +97,15 @@ void apply_process(Image const & original_img, Image & processed_img)
 	auto process = (f_process *)GetProcAddress(dll, EXPORTED_PROCESS_NAME_STR);
 	if (not process) exit_err("Can't find " EXPORTED_PROCESS_NAME_STR " in dll");
 
-	init(original_img);
-
 	original_img.blit_into(processed_img);
+
 	{
+		printf("// DLL Begin \\\\\n");
+		init(original_img);
+
 		TimeScope("Run process");
 		process(processed_img);
+		printf("\\\\  DLL End  //\n");
 	}
 
 	FreeLibrary(dll);
@@ -289,22 +294,30 @@ void blit_texture(GLuint tex)
 }
 
 
-///--- State
+///--- Config, State, Actions
+struct {
+	bool gl_debug = true;
+	int target_fps = 120;
+	int tex_count = 1/*Original*/ + 3/*Processed*/;
+} constexpr Config;
+
+struct {
+	int active_tex_idx = 0;
+	std::string target_abs_path = {};
+} State;
+
 struct {
 	bool switch_texture = false;
 	bool apply_process = false;
 	bool change_target_abs_path = false;
 } Actions;
 
-struct {
-	std::string target_abs_path = {};
-} State;
-
 void key_callback(GLFWwindow * window, int key, int scancode, int action, int mods)
 {
 	if (action == GLFW_PRESS and key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(window, true);
-	if (action == GLFW_PRESS and key == GLFW_KEY_SPACE) Actions.switch_texture = true;
-	if (action == GLFW_PRESS and key == GLFW_KEY_ENTER) Actions.apply_process = true;
+	if (action == GLFW_PRESS and key == GLFW_KEY_SPACE) Actions.apply_process = true;
+	if (action == GLFW_PRESS and key >= GLFW_KEY_1 and key < GLFW_KEY_1 + Config.tex_count)
+		Actions.switch_texture = true, State.active_tex_idx = key - GLFW_KEY_1;
 }
 
 void clear_actions()
@@ -319,15 +332,20 @@ void drop_callback(GLFWwindow* window, int path_count, const char* paths[])
 	printf("Set target file to \"%s\".\n", State.target_abs_path.c_str());
 }
 
+void update_window_title(GLFWwindow * window)
+{
+	char title[128];
+	sprintf_s(
+		title, "Image Processor > Image %i (%s)",
+		State.active_tex_idx + 1, State.active_tex_idx == 0 ? "Original" : "Processed"
+	);
+	glfwSetWindowTitle(window, title);
+}
+
 
 ///--- Application
 int main(int argc, const char * argv[])
 {
-	/// Config
-	int const TARGET_FPS = 120;
-	bool const OPENGL_DEBUG = true;
-
-
 	/// Init
 	if (argc < 2) exit_err("Supply image path as the first argument");
 	printf("Image: %s\n", argv[1]);
@@ -337,31 +355,25 @@ int main(int argc, const char * argv[])
 
 	Image processed_img(original_img.x, original_img.y, nullptr);
 
-	if (argc > 2)
-	{
-		State.target_abs_path = argv[2];
-		build_process(State.target_abs_path.c_str(), false);
-		apply_process(original_img, processed_img);
-	}
-
 	glfwSetErrorCallback([](int err, const char * desc){ print_err("GLFW[Error] %i: %s\n", err, desc); });
 	if (not glfwInit()) exit_err("GLFW Failed to init");
 
 	glfwWindowHint(GLFW_RESIZABLE, false);
 	glfwWindowHint(GLFW_DOUBLEBUFFER, false);
-	glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, OPENGL_DEBUG);
+	glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, Config.gl_debug);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	GLFWwindow * window = glfwCreateWindow(original_img.x, original_img.y, "Image Processor", nullptr, nullptr);
 	if (not window) exit_err("Window or context creation failed");
+	update_window_title(window);
 
 	glfwMakeContextCurrent(window);
 	{
-		int const glad_version = gladLoadGL(glfwGetProcAddress);
-		const unsigned char * const gl_version = glGetString(GL_VERSION);
+		int glad_version = gladLoadGL(glfwGetProcAddress);
+		const unsigned char * gl_version = glGetString(GL_VERSION);
 		printf("Glad: %i, OpenGL: %s\n", glad_version, gl_version);
 
-		if (OPENGL_DEBUG) glDebugMessageCallback(gl_debug_callback, nullptr);
+		if (Config.gl_debug) glDebugMessageCallback(gl_debug_callback, nullptr);
 	}
 	glfwSetKeyCallback(window, key_callback);
 	glfwSetDropCallback(window, drop_callback);
@@ -372,18 +384,34 @@ int main(int argc, const char * argv[])
 
 	init_blit_program();
 
-	GLuint const origianl_tex = create_texture({
-		.x = original_img.x, .y = original_img.y, .pixels = original_img.pixels,
-	});
+	GLuint texs[Config.tex_count];
+	{
+		TextureDesc desc{
+			.x = original_img.x, .y = original_img.y,
+			.pixels = nullptr
+		};
+		for (int i = 0; i < Config.tex_count; ++i)
+			texs[i] = create_texture(desc);
+		
+		update_texture(texs[0], original_img);
+	}
 
-	GLuint const processed_tex = create_texture({
-		.x = original_img.x, .y = original_img.y, .pixels = processed_img.pixels,
-	});
+	if (argc > 2) // an initial process is provided
+	{
+		State.target_abs_path = argv[2];
+		if (build_process(State.target_abs_path.c_str(), false))
+		{
+			apply_process(original_img, processed_img);
+			printf("Applied initial process \"%s\"\n", State.target_abs_path.c_str());
+
+			State.active_tex_idx = 1;
+			update_texture(texs[1], processed_img);
+		}
+	}
 
 
 	/// Run
-	GLuint active_tex = origianl_tex;
-	blit_texture(active_tex);
+	blit_texture(texs[State.active_tex_idx]);
 
 	while (not glfwWindowShouldClose(window))
 	{
@@ -394,35 +422,48 @@ int main(int argc, const char * argv[])
 
 		if (Actions.switch_texture) 
 		{
-			active_tex = (active_tex == origianl_tex ? processed_tex : origianl_tex);
-			blit_texture(active_tex);
+			blit_texture(texs[State.active_tex_idx]);
+			update_window_title(window);
 		}
 
 		if (Actions.apply_process)
 		{
 			if (State.target_abs_path.empty())
 				print_err("[Error] Set a target file by dropping a file into the window.\n");
+			else if (State.active_tex_idx == 0)
+				print_err("[Error] Select a Processed image to store the result.\n");
 			else
 			{
-				build_process(State.target_abs_path.c_str(), true);
-				apply_process(original_img, processed_img);
-				update_texture(processed_tex, processed_img);
-				if (processed_tex == active_tex) blit_texture(processed_tex);
+				if (build_process(State.target_abs_path.c_str(), true))
+				{
+					GLuint const & processed_tex = texs[State.active_tex_idx];
+					apply_process(original_img, processed_img);
+					update_texture(processed_tex, processed_img);
+					blit_texture(processed_tex);
+				}
 			}
 		}
 
 		if (Actions.change_target_abs_path)
 		{
-			build_process(State.target_abs_path.c_str(), false);
-			apply_process(original_img, processed_img);
-			update_texture(processed_tex, processed_img);
-			if (processed_tex == active_tex) blit_texture(processed_tex);
+			if (State.active_tex_idx == 0)
+				print_err("[Error] Select a Processed image to store the result.\n");
+			else
+			{
+				if (build_process(State.target_abs_path.c_str(), false))
+				{
+					GLuint const & processed_tex = texs[State.active_tex_idx];
+					apply_process(original_img, processed_img);
+					update_texture(processed_tex, processed_img);
+					blit_texture(processed_tex);
+				}
+			}
 		}
 
 		glFinish();
 
 		f64 frame_s = glfwGetTime() - frame_begin_s;
-		Sleep((DWORD)max(0., 1000 * ((1. / TARGET_FPS) - frame_s)));
+		Sleep((DWORD)max(0., 1000 * ((1. / Config.target_fps) - frame_s)));
 	}
 
 
