@@ -12,7 +12,7 @@
             "args": ["MrIncredible.png"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "environment": [],
+            "environment": [{"name": "OMP_WAIT_POLICY", "value": "passive"}],
             "console": "externalTerminal"
         }
     ]
