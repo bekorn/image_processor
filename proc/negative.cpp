@@ -3,12 +3,12 @@
 
 void init(Image const & image)
 {
-    // printf("[DLL] Init\n");
+    // printf("Init\n");
 }
 
 void process(Image & image)
 {
-    printf("[DLL] Processing image %ix%i\n", image.x, image.y);
+    printf("Processing image %ix%i\n", image.x, image.y);
 
     i32 const pixel_count = image.x * image.y;
     // #pragma omp parallel for schedule(static)

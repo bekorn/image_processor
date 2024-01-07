@@ -3,12 +3,12 @@
 
 void init(Image const & image)
 {
-    // printf("[DLL] Init\n");
+    // printf("Init\n");
 }
 
 void process(Image & image)
 {
-    printf("[DLL] Processing image %ix%i\n", image.x, image.y);
+    printf("Processing image %ix%i\n", image.x, image.y);
 
     srand(123*321);
 

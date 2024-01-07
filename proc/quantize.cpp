@@ -1,21 +1,16 @@
 #include "common.hpp"
 #include "process.hpp"
 
-#include <unordered_set>
+#include <unordered_map>
 
 void init(Image const & image)
 {
-    // printf("[DLL] Init\n");
+    // printf("Init\n");
 }
-
-// TODO(bekorn): try weighted mean
-//  Currently, background color is changing with quantization. But this is not expected,
-//  since its a large area with a solid color. It shouldn't change. To make large areas
-//  change less, while calculate the means, multiply colors with their counts'.
 
 void process(Image & image)
 {
-    printf("[DLL] Processing image %ix%i\n", image.x, image.y);
+    printf("Processing image %ix%i\n", image.x, image.y);
 
     i32 const pixel_count = image.x * image.y;
 
@@ -24,39 +19,47 @@ void process(Image & image)
 
     // gather a unique set of colors to work with
     unique_array<u8x4> colors;
+    unique_array<u32> counts;
     size_t colors_size;
     {
-        std::unordered_set<u32> set;
-        set.reserve(pixel_count / 10);
+        std::unordered_map<u32, u32> color_count;
+        color_count.reserve(pixel_count / 10);
 
         // reduce the color resolution to reduce the workload
         // from (2^8)^3 = 16'777'216
         // to   (2^7)^3 =  2'097'152
         // or   (2^6)^3 =    262'144
+        // u32 color_mask = 0b11111111'11111111'11111111'11111111;
         u32 color_mask = 0b11111110'11111110'11111110'11111110;
+        // u32 color_mask = 0b11111100'11111100'11111100'11111100;
+
         for (u32 & pixel : pixels_u32)
-            set.insert(pixel & color_mask);
+            color_count[pixel & color_mask] += 1;
 
-        colors_size = set.size();
+        colors_size = color_count.size();
         colors = new u8x4[colors_size];
+        counts = new u32[colors_size];
 
-        u32 * iter = (u32 *)colors.things;
-        for (u32 color : set)
-            *iter++ = color;
+        u32 * iter_color = (u32 *)colors.things;
+        u32 * iter_count = counts.things;
+        for (auto [color, count] : color_count)
+            *iter_color++ = color,
+            *iter_count++ = count;
 
         printf("Pixel Count: %i\nUnique colors: %zi\n", pixel_count, colors_size);
     }
 
     srand(123*321);
 
-    u8 const k = 255;
+    int const k = 28;
     u8x4 centers[k];
     for (u8x4 & center : centers)
         memcpy(center, colors[rand() % colors_size], 4);
 
-    for (int _ = 0; _ < 64; ++_)
+    for (int iteration = 0; iteration < 64; ++iteration)
     {
-        // assign center to each color
+        // find the means
+        u32x4 means[k] = {0};
         for (int i = 0; i < colors_size; ++i)
         {
             u8x4 & color = colors[i];
@@ -76,40 +79,51 @@ void process(Image & image)
                     closest_center = ci;
             }
 
-            color[3] = closest_center;
-        }
-
-        // find the centers' means
-        u32x4 means[k] = {0};
-        for (int i = 0; i < colors_size; ++i)
-        {
-            u8x4 & color = colors[i];
-
-            u8 closest_center = color[3];
             u32x4 & mean = means[closest_center];
+            u32 count = counts[i];
 
-            mean[0] += color[0],
-            mean[1] += color[1],
-            mean[2] += color[2],
-            mean[3] += 1;
+            mean[0] += color[0] * count,
+            mean[1] += color[1] * count,
+            mean[2] += color[2] * count,
+            mean[3] += count;
         }
 
         // move centers to their means
-        int active_center_count = 0;
+        int max_center_movement = 0;
         for (int ci = 0; ci < k; ++ci)
         {
             u32x4 & mean = means[ci];
             u8x4 & center = centers[ci];
 
             if (mean[3] != 0)
-                active_center_count += 1;
+            {
+                u8x4 new_center = {
+                    mean[0] / mean[3],
+                    mean[1] / mean[3],
+                    mean[2] / mean[3],
+                };
 
-            if (mean[3] != 0)
-                center[0] = mean[0] / mean[3],
-                center[1] = mean[1] / mean[3],
-                center[2] = mean[2] / mean[3];
+                int d0 = abs(int(new_center[0]) - center[0]);
+                int d1 = abs(int(new_center[1]) - center[1]);
+                int d2 = abs(int(new_center[2]) - center[2]);
+                int dist = d0 + d1 + d2;
+
+                max_center_movement = max(max_center_movement, dist);
+
+                memcpy(center, new_center, 4);
+            }
+            else
+            {
+                //TODO(bekorn): maybe move center to somewhere it can be useful
+            }
         }
-        // printf("Iter %2i, Active centers: %3i / %i\n", _, active_center_count, k);
+        // printf("Iter %2i, Max center movement %4i\n", iteration, max_center_movement);
+
+        if (max_center_movement < 4) // arbitrary threshold
+        {
+            printf("Breaking early due to low movement, after iteration %i.\n", iteration);
+            break;
+        }
     }
 
     #pragma omp parallel for schedule(static)
@@ -131,6 +145,27 @@ void process(Image & image)
                 closest_center = &center;
         }
 
-        memcpy(pixel, closest_center, 3);
+        memcpy(pixel, closest_center, 4);
+    }
+
+
+    /// Debug
+
+    if (true) // visualize centers
+    for (int i = 0; i < k; ++i)
+    {
+        u8x4 & center = centers[i];
+        int const dim = 16;
+        int const grid_dim = 32;
+        u8x4 * iter = pixels.begin();
+        iter += dim * (i % grid_dim); // x
+        iter += dim * (i / grid_dim) * image.y; // y
+        for (int y = 0; y < dim; ++y)
+        {
+            for (int x = 0; x < dim; ++x)
+                memcpy(iter + x, center, 4);
+
+            iter += image.x;
+        }
     }
 }
