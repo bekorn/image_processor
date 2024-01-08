@@ -1,51 +1,49 @@
-# ImageProcessor
+# image_processor
 
-Finally come up with a project idea to learn about DLLs in C++.
+Intended audience: experienced with C++, curious about DLLs.
+
+
+### How to use
+
+> **Note** Windows only, requires MSVC compiler 2022(tested), 2019, or 2017.
+
+`TODO(bekorn): Tutorial/showcase video`
+
+All the bat files and the program must be run from the project's root directory.
+
+First, run the `config.bat` once. Then run `build.bat` to build the program. `run.bat` will start the program with MrIncredible.png. A window should open with the image. Use 1, 2, 3, 4 to switch between textures (check window title), select a process texture. Pick a file from the proc folder and drop it into the window. The file should compile and execute, result will be saved to the selected texture. Try editing the cpp file. When you press Space, it should rebuild and executed again.
+
+Main program accepts `<img_rel_path> <[optional]proc_abs_path>` arguments, modify `run.bat` for easy use.
+
+`build_dll.bat <proc_abs_path>` will build a process.
+
+If you want to debug a process: delete the build_dll directory if it is generated. Change `rel_args` to `deb_args` in `build_dll.bat`. Build the process. Configure your debugger to provide both the arguments to the main program, and set the working directory correctly (vscode debugging configuration is commited). Run the main program with your debugger.
+
+
+### What to read
+
+The `///--- Interop` section in [src/main.cpp](src/main.cpp) uses  Windows API to load/bind/free a dll.
+
+[build_dll.bat](build_dll.bat) builds the dll (precompiled headers makes it a bit convoluted).
+
+[src/process.hpp](src/process.hpp) ensures that names are same for both main and dll.
+
+[src/process_wrapper.cpp](src/process_wrapper.cpp) is the actual file that is compiled. It helps to statically check the signatures of exported functions, also makes it easier to write new dlls.
+
+
+### About
 
 Inspired by this repo (shared on ÜNOG) https://github.com/Gord10/PaletteConverterCSharp
 
-```txt
--The-Gist------------------------------------------------------------------------------------------------
-	1- Application will load and show an image.
-	2- It will load a DLL that has an image processing function.
-	3- Then it will show both the original and the processed image.
-	4- It will be possible to modify the image processing function, complile a new DLL and goto 2
----------------------------------------------------------------------------------------------------------
-
-
-The DLL will implement
-	void init(const & image);
-	void process(& image);
-
-With the seperate global memory of the DLL, it should be possible to keep a persistant state between init and process calls.
-
-
-Crude implementation:
-- init window and opengl context (w/vsync)
-- load image using stb_img and make a texture
-- copy the original texture into the processed texture
-- show active texture
-- on Space
-	- switch active texture
-- on Enter
-	- compile the cpp file into a DLL, load it and call init
-	- call process and update processed texture
-
-
-Possible dependencies:
-- stb_img
+Dependencies:
 - GLFW
 - GLAD
+- stb_img
 
 
 Extra features:
-- Save the processed image
-- Basic UI for a diff slider
-- Auto reload on file change
-- Learn Windows API, ditch GLFW
-
-```
-
+- [ ] Save the processed image
+- [ ] Auto reload on file change
 
 
 Resources:
