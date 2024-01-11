@@ -2,12 +2,12 @@
 
 Intended audience: experienced with C++, curious about DLLs.
 
+Tutorial/showcase video: https://youtu.be/GNH2IjsKP68
+
 
 ### How to use
 
 > **Note** Windows only, requires MSVC compiler 2022(tested), 2019, or 2017.
-
-`TODO(bekorn): Tutorial/showcase video`
 
 All the bat files and the program must be run from the project's root directory.
 
@@ -22,7 +22,7 @@ If you want to debug a process: delete the build_dll directory if it is generate
 
 ### What to read
 
-The `///--- Interop` section in [src/main.cpp](src/main.cpp) uses  Windows API to load/bind/free a dll.
+The `region Interop` in [src/main.cpp](src/main.cpp) uses  Windows API to load/bind/free a dll.
 
 [build_dll.bat](build_dll.bat) builds the dll (precompiled headers makes it a bit convoluted).
 
@@ -43,7 +43,8 @@ Dependencies:
 
 Extra features:
 - [ ] Save the processed image
-- [ ] Auto reload on file change
+- [X] Auto reload on file change
+- [ ] Learn Windows API and ditch GLFW
 
 
 Resources:

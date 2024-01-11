@@ -1,8 +1,7 @@
 #include "common.hpp"
 #include "process.hpp"
 
-
-///--- Interop
+#pragma region Interop
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -111,8 +110,113 @@ void apply_process(Image const & original_img, Image & processed_img)
 	FreeLibrary(dll);
 }
 
+std::wstring utf8_to_utf16(std::string const & str)
+{
+	std::wstring wstr;
+	wstr.resize(MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), nullptr, 0));
+	MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), wstr.data(), (int)wstr.size());
+	return wstr;
+}
 
-///--- Graphics
+class FileWatcher
+{
+	static constexpr size_t buffer_size = 4 << 10;
+	unique_array<std::byte> buffer{new std::byte[buffer_size]};
+	std::wstring file_name;
+	HANDLE file_handle{INVALID_HANDLE_VALUE};
+	OVERLAPPED overlapped{.hEvent = INVALID_HANDLE_VALUE};
+
+public:
+	~FileWatcher()
+	{
+		if (file_handle != INVALID_HANDLE_VALUE) CancelIo(file_handle), CloseHandle(file_handle);
+		if (overlapped.hEvent != INVALID_HANDLE_VALUE) CloseHandle(overlapped.hEvent);
+	}
+
+	void watch(std::string const & file_abs_path)
+	{
+		std::wstring wfile_abs_path = utf8_to_utf16(file_abs_path);
+		size_t dir_end_idx = wfile_abs_path.find_last_of(L"\\/");
+		if (dir_end_idx == std::string::npos) exit_err("[Error] Invalid path");
+
+		std::wstring dir = wfile_abs_path.substr(0, dir_end_idx);
+		file_name = wfile_abs_path.substr(dir_end_idx + 1);
+
+		if (file_handle != INVALID_HANDLE_VALUE) CancelIo(file_handle), CloseHandle(file_handle);
+		file_handle = CreateFileW(
+			dir.c_str(),
+			FILE_LIST_DIRECTORY,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			0,
+			OPEN_EXISTING,
+			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+			0
+		);
+		if (file_handle == INVALID_HANDLE_VALUE) exit_err("[Error] CreateFileA failed");
+
+		if (overlapped.hEvent != INVALID_HANDLE_VALUE) CloseHandle(overlapped.hEvent);
+		overlapped.hEvent = CreateEventA(0, false, false, nullptr);
+		if (overlapped.hEvent == INVALID_HANDLE_VALUE) exit_err("[Error] CreateEventA failed");
+
+		if (not ReadDirectoryChangesW(
+			file_handle,
+			buffer, buffer_size,
+			false,
+			FILE_NOTIFY_CHANGE_LAST_WRITE,
+			nullptr,
+			&overlapped,
+			nullptr
+		)) exit_err("[Error] ReadDirectoryChangesW failed");
+	}
+
+	bool is_notified()
+	{
+		if (file_handle == INVALID_HANDLE_VALUE) return false;
+
+		bool is_file_changed = false;
+
+		// there may be many notifications, process all
+		while (true)
+		{
+			DWORD bytes_written;
+			if (not GetOverlappedResult(file_handle, &overlapped, &bytes_written, false))
+			{
+				if (GetLastError() != ERROR_IO_INCOMPLETE) exit_err("[Error] GetOverlappedResult failed\n");
+				break;
+			}
+
+			std::byte * ptr = buffer.things;
+			FILE_NOTIFY_INFORMATION * notification = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(ptr);
+			while (notification->Action != 0)
+			{
+				std::wstring_view name(notification->FileName, notification->FileNameLength / sizeof(wchar_t));
+				if (name == file_name) is_file_changed = true;
+
+				// check for any other notifications
+				if (notification->NextEntryOffset == 0) break;
+
+				ptr += notification->NextEntryOffset;
+				notification = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(ptr);
+			}
+
+			if (not ReadDirectoryChangesW(
+				file_handle,
+				buffer, buffer_size,
+				false,
+				FILE_NOTIFY_CHANGE_LAST_WRITE,
+				nullptr,
+				&overlapped,
+				nullptr
+			)) exit_err("[Error] ReadDirectoryChangesW failed");
+		}
+
+		return is_file_changed;
+	}
+};
+
+#pragma endregion
+
+#pragma region Graphics
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_PNG
 #define STB_IMAGE_IMPLEMENTATION
@@ -293,8 +397,10 @@ void blit_texture(GLuint tex)
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
+#pragma endregion
 
-///--- Config, State, Actions
+#pragma region Config, State, Actions
+
 struct {
 	bool gl_debug = true;
 	int target_fps = 120;
@@ -312,17 +418,17 @@ struct {
 	bool change_target_abs_path = false;
 } Actions;
 
+void clear_actions()
+{
+	Actions = {0};
+}
+
 void key_callback(GLFWwindow * window, int key, int scancode, int action, int mods)
 {
 	if (action == GLFW_PRESS and key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(window, true);
 	if (action == GLFW_PRESS and key == GLFW_KEY_SPACE) Actions.apply_process = true;
 	if (action == GLFW_PRESS and key >= GLFW_KEY_1 and key < GLFW_KEY_1 + Config.tex_count)
 		Actions.switch_texture = true, State.active_tex_idx = key - GLFW_KEY_1;
-}
-
-void clear_actions()
-{
-	Actions = {0};
 }
 
 void drop_callback(GLFWwindow* window, int path_count, const char* paths[])
@@ -342,8 +448,8 @@ void update_window_title(GLFWwindow * window)
 	glfwSetWindowTitle(window, title);
 }
 
+#pragma endregion
 
-///--- Application
 int main(int argc, const char * argv[])
 {
 	/// Init
@@ -399,26 +505,24 @@ int main(int argc, const char * argv[])
 	if (argc > 2) // an initial process is provided
 	{
 		State.target_abs_path = argv[2];
-		if (build_process(State.target_abs_path.c_str(), false))
-		{
-			apply_process(original_img, processed_img);
-			printf("Applied initial process \"%s\"\n", State.target_abs_path.c_str());
+		Actions.change_target_abs_path = true;
 
-			State.active_tex_idx = 1;
-			update_texture(texs[1], processed_img);
-		}
+		State.active_tex_idx = 1;
+		Actions.switch_texture = true;
 	}
+
+	FileWatcher file_watcher;
 
 
 	/// Run
-	blit_texture(texs[State.active_tex_idx]);
+	Actions.switch_texture = true;
 
 	while (not glfwWindowShouldClose(window))
 	{
 		f64 const frame_begin_s = glfwGetTime();
 
-		clear_actions();
 		glfwPollEvents();
+		if (file_watcher.is_notified()) Actions.apply_process = true;
 
 		if (Actions.switch_texture) 
 		{
@@ -457,10 +561,13 @@ int main(int argc, const char * argv[])
 					update_texture(processed_tex, processed_img);
 					blit_texture(processed_tex);
 				}
+
+				file_watcher.watch(State.target_abs_path);
 			}
 		}
 
 		glFinish();
+		clear_actions();
 
 		f64 frame_s = glfwGetTime() - frame_begin_s;
 		Sleep((DWORD)max(0., 1000 * ((1. / Config.target_fps) - frame_s)));
