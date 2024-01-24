@@ -222,9 +222,9 @@ public:
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/image.h>
 
-Image load_image(const char * rel_path, bool flip_vertically = true)
+Image load_image(const char * path, bool flip_vertically = true)
 {
-	FILE * image_file = fopen(rel_path, "rb");
+	FILE * image_file = fopen(path, "rb");
 	if (not image_file) exit_err("Can't open image file");
 
 	stbi_set_flip_vertically_on_load(flip_vertically);
@@ -237,6 +237,25 @@ Image load_image(const char * rel_path, bool flip_vertically = true)
 	return {x, y, (u8x4 *)(rgba_pixels)};
 }
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb/image_write.h>
+
+void save_image(Image const & img, std::string_view path, bool flip_vertically = true)
+{
+	stbi_flip_vertically_on_write(flip_vertically);
+
+	std::string new_path;
+	new_path.reserve(path.size() + 32);
+	size_t dot_idx = path.rfind('.');
+	new_path += path.substr(0, dot_idx);
+	new_path += "_processed";
+	new_path += path.substr(dot_idx);
+
+	if (path.ends_with("png"))	stbi_write_png(new_path.c_str(), img.x, img.y, 4, img.pixels, img.y * sizeof(u8x4));
+	else						stbi_write_jpg(new_path.c_str(), img.x, img.y, 4, img.pixels, 100);
+
+	printf("Saved iamge to %s\n", new_path.c_str());
+}
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -272,10 +291,16 @@ GLuint create_texture(TextureDesc const & desc)
 	return id;
 }
 
-void update_texture(GLuint tex, Image const & img)
+void upload_texture(GLuint tex, Image const & img)
 {
 	glBindTexture(GL_TEXTURE_2D, tex);
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, img.x, img.y, GL_RGBA, GL_UNSIGNED_BYTE, img.pixels);
+}
+
+void download_texture(GLuint tex, Image & img)
+{
+	glBindTexture(GL_TEXTURE_2D, tex);
+	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.pixels);
 }
 
 void gl_debug_callback(
@@ -413,9 +438,10 @@ struct {
 } State;
 
 struct {
-	bool switch_texture = false;
-	bool apply_process = false;
+	bool switch_texture 		= false;
+	bool apply_process 			= false;
 	bool change_target_abs_path = false;
+	bool save_image 			= false;
 } Actions;
 
 void clear_actions()
@@ -429,6 +455,7 @@ void key_callback(GLFWwindow * window, int key, int scancode, int action, int mo
 	if (action == GLFW_PRESS and key == GLFW_KEY_SPACE) Actions.apply_process = true;
 	if (action == GLFW_PRESS and key >= GLFW_KEY_1 and key < GLFW_KEY_1 + Config.tex_count)
 		Actions.switch_texture = true, State.active_tex_idx = key - GLFW_KEY_1;
+	if (action == GLFW_PRESS and key == GLFW_KEY_S) Actions.save_image = true;
 }
 
 void drop_callback(GLFWwindow* window, int path_count, const char* paths[])
@@ -454,9 +481,10 @@ int main(int argc, const char * argv[])
 {
 	/// Init
 	if (argc < 2) exit_err("Supply image path as the first argument");
-	printf("Image: %s\n", argv[1]);
+	const char * const original_img_path = argv[1];
+	printf("Image: %s\n", original_img_path);
 
-	Image const original_img = load_image(argv[1]);
+	Image const original_img = load_image(original_img_path);
 	printf("Loaded image, resolution: %dx%d\n", original_img.x, original_img.y);
 
 	Image processed_img(original_img.x, original_img.y, nullptr);
@@ -498,8 +526,8 @@ int main(int argc, const char * argv[])
 		};
 		for (int i = 0; i < Config.tex_count; ++i)
 			texs[i] = create_texture(desc);
-		
-		update_texture(texs[0], original_img);
+
+		upload_texture(texs[0], original_img);
 	}
 
 	if (argc > 2) // an initial process is provided
@@ -542,7 +570,7 @@ int main(int argc, const char * argv[])
 				{
 					GLuint const & processed_tex = texs[State.active_tex_idx];
 					apply_process(original_img, processed_img);
-					update_texture(processed_tex, processed_img);
+					upload_texture(processed_tex, processed_img);
 					blit_texture(processed_tex);
 				}
 			}
@@ -558,12 +586,19 @@ int main(int argc, const char * argv[])
 				{
 					GLuint const & processed_tex = texs[State.active_tex_idx];
 					apply_process(original_img, processed_img);
-					update_texture(processed_tex, processed_img);
+					upload_texture(processed_tex, processed_img);
 					blit_texture(processed_tex);
 				}
 
 				file_watcher.watch(State.target_abs_path);
 			}
+		}
+
+		if (Actions.save_image)
+		{
+			download_texture(texs[State.active_tex_idx], processed_img);
+			save_image(processed_img, original_img_path);
+			printf("Saved image\n");
 		}
 
 		glFinish();

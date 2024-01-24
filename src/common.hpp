@@ -1,9 +1,10 @@
 #pragma once
 
 ///--- Core
+#define _CRT_SECURE_NO_WARNINGS
 #include <ciso646>
-#include <cstdio>
 #include <cstdlib>
+#include <cstdio>
 #include <string>
 
 using i32 = int32_t;

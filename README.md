@@ -11,9 +11,9 @@ Tutorial/showcase video: https://youtu.be/GNH2IjsKP68
 
 All the bat files and the program must be run from the project's root directory.
 
-First, run the `config.bat` once. Then run `build.bat` to build the program. `run.bat` will start the program with MrIncredible.png. A window should open with the image. Use 1, 2, 3, 4 to switch between textures (check window title), select a process texture. Pick a file from the proc folder and drop it into the window. The file should compile and execute, result will be saved to the selected texture. Try editing the cpp file. When you press Space, it should rebuild and executed again.
+First, run the `config.bat` once. Then run `build.bat` to build the program. `run.bat` will start the program with MrIncredible.png. A window should open with the image. Use 1, 2, 3, 4 to switch between textures (check window title), select a process texture. Pick a file from the proc folder and drop it into the window. The file should compile and execute, result will be saved to the selected texture. Try editing the cpp file. When you press Space, it should rebuild and executed again. Press S to save the texture to disk as a new image.
 
-Main program accepts `<img_rel_path> <[optional]proc_abs_path>` arguments, modify `run.bat` for easy use.
+Main program accepts `<img_path> <[optional]proc_abs_path>` arguments, modify `run.bat` for easy use.
 
 `build_dll.bat <proc_abs_path>` will build a process.
 
@@ -42,7 +42,7 @@ Dependencies:
 
 
 Extra features:
-- [ ] Save the processed image
+- [X] Save the processed image
 - [X] Auto reload on file change
 - [ ] Learn Windows API and ditch GLFW
 
