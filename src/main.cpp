@@ -1,12 +1,23 @@
 #include "common.hpp"
 #include "process.hpp"
 
+/* Abbrevations:
+ img	image 	(on cpu ram)
+ tex	texture (on gpu ram)
+ orig	original, provided
+ proc	processed, generated
+ abs_path	absolute path
+ rel_path	relative path
+ path		any (OS will handle it) path
+*see common.hpp for basic data types
+*/
+
 #pragma region Interop
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 
-bool exec(const char * cmd, std::string & out, i32 & exit_code) {
+bool exec(const char * cmd, str & out, i32 & exit_code) {
 	// https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/popen-wpopen?view=msvc-170#example
     FILE * pipe = _popen(cmd, "r");
     if (not pipe) return false;
@@ -70,7 +81,7 @@ bool build_process(const char * cpp_abs_path, bool check_write_times)
 		char command[1024];
 		sprintf_s(command, "build_dll %s", cpp_abs_path);
 
-		std::string out;
+		str out;
 		i32 exit_code;
 		if (not exec(command, out, exit_code) or exit_code != 0)
 		{
@@ -83,7 +94,7 @@ bool build_process(const char * cpp_abs_path, bool check_write_times)
 	return true;
 }
 
-void apply_process(Image const & original_img, Image & processed_img)
+void apply_process(Image const & orig_img, Image & proc_img)
 {
 	TimeScope("Apply process");
 
@@ -96,23 +107,23 @@ void apply_process(Image const & original_img, Image & processed_img)
 	auto process = (f_process *)GetProcAddress(dll, EXPORTED_PROCESS_NAME_STR);
 	if (not process) exit_err("Can't find " EXPORTED_PROCESS_NAME_STR " in dll");
 
-	original_img.blit_into(processed_img);
+	orig_img.blit_into(proc_img);
 
 	{
 		printf("// DLL Begin \\\\\n");
-		init(original_img);
+		init(orig_img);
 
 		TimeScope("Run process");
-		process(processed_img);
+		process(proc_img);
 		printf("\\\\  DLL End  //\n");
 	}
 
 	FreeLibrary(dll);
 }
 
-std::wstring utf8_to_utf16(std::string const & str)
+wstr str_to_wstr(str const & str)
 {
-	std::wstring wstr;
+	wstr wstr;
 	wstr.resize(MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), nullptr, 0));
 	MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), wstr.data(), (int)wstr.size());
 	return wstr;
@@ -122,7 +133,7 @@ class FileWatcher
 {
 	static constexpr size_t buffer_size = 4 << 10;
 	unique_array<std::byte> buffer{new std::byte[buffer_size]};
-	std::wstring file_name;
+	wstr file_name;
 	HANDLE file_handle{INVALID_HANDLE_VALUE};
 	OVERLAPPED overlapped{.hEvent = INVALID_HANDLE_VALUE};
 
@@ -133,13 +144,13 @@ public:
 		if (overlapped.hEvent != INVALID_HANDLE_VALUE) CloseHandle(overlapped.hEvent);
 	}
 
-	void watch(std::string const & file_abs_path)
+	void watch(str const & file_abs_path)
 	{
-		std::wstring wfile_abs_path = utf8_to_utf16(file_abs_path);
+		wstr wfile_abs_path = str_to_wstr(file_abs_path);
 		size_t dir_end_idx = wfile_abs_path.find_last_of(L"\\/");
 		if (dir_end_idx == std::string::npos) exit_err("[Error] Invalid path");
 
-		std::wstring dir = wfile_abs_path.substr(0, dir_end_idx);
+		wstr dir = wfile_abs_path.substr(0, dir_end_idx);
 		file_name = wfile_abs_path.substr(dir_end_idx + 1);
 
 		if (file_handle != INVALID_HANDLE_VALUE) CancelIo(file_handle), CloseHandle(file_handle);
@@ -189,7 +200,7 @@ public:
 			FILE_NOTIFY_INFORMATION * notification = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(ptr);
 			while (notification->Action != 0)
 			{
-				std::wstring_view name(notification->FileName, notification->FileNameLength / sizeof(wchar_t));
+				wstrview name(notification->FileName, notification->FileNameLength / sizeof(wchar_t));
 				if (name == file_name) is_file_changed = true;
 
 				// check for any other notifications
@@ -240,11 +251,11 @@ Image load_image(const char * path, bool flip_vertically = true)
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb/image_write.h>
 
-void save_image(Image const & img, std::string_view path, bool flip_vertically = true)
+void save_image(Image const & img, strview path, bool flip_vertically = true)
 {
 	stbi_flip_vertically_on_write(flip_vertically);
 
-	std::string new_path;
+	str new_path;
 	new_path.reserve(path.size() + 32);
 	size_t dot_idx = path.rfind('.');
 	new_path += path.substr(0, dot_idx);
@@ -434,7 +445,7 @@ struct {
 
 struct {
 	int active_tex_idx = 0;
-	std::string target_abs_path = {};
+	str target_abs_path = {};
 } State;
 
 struct {
@@ -481,13 +492,13 @@ int main(int argc, const char * argv[])
 {
 	/// Init
 	if (argc < 2) exit_err("Supply image path as the first argument");
-	const char * const original_img_path = argv[1];
-	printf("Image: %s\n", original_img_path);
+	const char * const orig_img_path = argv[1];
+	printf("Image: %s\n", orig_img_path);
 
-	Image const original_img = load_image(original_img_path);
-	printf("Loaded image, resolution: %dx%d\n", original_img.x, original_img.y);
+	Image const orig_img = load_image(orig_img_path);
+	printf("Loaded image, resolution: %dx%d\n", orig_img.x, orig_img.y);
 
-	Image processed_img(original_img.x, original_img.y, nullptr);
+	Image proc_img(orig_img.x, orig_img.y, nullptr);
 
 	glfwSetErrorCallback([](int err, const char * desc){ print_err("GLFW[Error] %i: %s\n", err, desc); });
 	if (not glfwInit()) exit_err("GLFW Failed to init");
@@ -497,18 +508,13 @@ int main(int argc, const char * argv[])
 	glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, Config.gl_debug);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-	GLFWwindow * window = glfwCreateWindow(original_img.x, original_img.y, "Image Processor", nullptr, nullptr);
+	GLFWwindow * window = glfwCreateWindow(orig_img.x, orig_img.y, "Image Processor", nullptr, nullptr);
 	if (not window) exit_err("Window or context creation failed");
-	update_window_title(window);
 
 	glfwMakeContextCurrent(window);
-	{
-		int glad_version = gladLoadGL(glfwGetProcAddress);
-		const unsigned char * gl_version = glGetString(GL_VERSION);
-		printf("Glad: %i, OpenGL: %s\n", glad_version, gl_version);
-
-		if (Config.gl_debug) glDebugMessageCallback(gl_debug_callback, nullptr);
-	}
+	gladLoadGL(glfwGetProcAddress);
+	printf("OpenGL: %s\n", glGetString(GL_VERSION));
+	if (Config.gl_debug) glDebugMessageCallback(gl_debug_callback, nullptr);
 	glfwSetKeyCallback(window, key_callback);
 	glfwSetDropCallback(window, drop_callback);
 
@@ -521,13 +527,13 @@ int main(int argc, const char * argv[])
 	GLuint texs[Config.tex_count];
 	{
 		TextureDesc desc{
-			.x = original_img.x, .y = original_img.y,
+			.x = orig_img.x, .y = orig_img.y,
 			.pixels = nullptr
 		};
 		for (int i = 0; i < Config.tex_count; ++i)
 			texs[i] = create_texture(desc);
 
-		upload_texture(texs[0], original_img);
+		upload_texture(texs[0], orig_img);
 	}
 
 	if (argc > 2) // an initial process is provided
@@ -568,10 +574,10 @@ int main(int argc, const char * argv[])
 			{
 				if (build_process(State.target_abs_path.c_str(), true))
 				{
-					GLuint const & processed_tex = texs[State.active_tex_idx];
-					apply_process(original_img, processed_img);
-					upload_texture(processed_tex, processed_img);
-					blit_texture(processed_tex);
+					GLuint const & proc_tex = texs[State.active_tex_idx];
+					apply_process(orig_img, proc_img);
+					upload_texture(proc_tex, proc_img);
+					blit_texture(proc_tex);
 				}
 			}
 		}
@@ -584,10 +590,10 @@ int main(int argc, const char * argv[])
 			{
 				if (build_process(State.target_abs_path.c_str(), false))
 				{
-					GLuint const & processed_tex = texs[State.active_tex_idx];
-					apply_process(original_img, processed_img);
-					upload_texture(processed_tex, processed_img);
-					blit_texture(processed_tex);
+					GLuint const & proc_tex = texs[State.active_tex_idx];
+					apply_process(orig_img, proc_img);
+					upload_texture(proc_tex, proc_img);
+					blit_texture(proc_tex);
 				}
 
 				file_watcher.watch(State.target_abs_path);
@@ -596,8 +602,8 @@ int main(int argc, const char * argv[])
 
 		if (Actions.save_image)
 		{
-			download_texture(texs[State.active_tex_idx], processed_img);
-			save_image(processed_img, original_img_path);
+			download_texture(texs[State.active_tex_idx], proc_img);
+			save_image(proc_img, orig_img_path);
 			printf("Saved image\n");
 		}
 
